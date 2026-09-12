@@ -5,7 +5,7 @@
 - Next.js App Router with TypeScript and Tailwind CSS
 - One client page; Node.js API route with a 60-second platform budget
 - Plain `fetch` to OpenRouter; no LLM framework
-- Browser camera, Web Speech Recognition, and speech synthesis
+- Browser camera and Web Speech Recognition; OpenRouter MP3 speech output with browser speech fallback
 - React state mirrored to `localStorage`; no database, auth, or accounts
 
 ## Conventions
@@ -16,6 +16,8 @@
 - The model decides progression from the frame, state, user words, and playbook. Do not encode the demo sequence as application conditionals.
 - Preserve the last good state on model, timeout, or parsing failure.
 - Spoken output stays under two short sentences and is always duplicated in the visual caption.
+- Speech output uses `/api/speech` and OpenRouter's dedicated `/api/v1/audio/speech` endpoint. Keep all OpenRouter fetch calls in `lib/openrouter.ts`. Use the existing key; optional `OPENROUTER_TTS_MODEL` and `OPENROUTER_TTS_VOICE` must be a supported pair.
+- Cancel superseded speech; pause the mic during generation/playback and for 300ms afterward. Replay must not capture an image or advance the project.
 - Never expose `OPENROUTER_API_KEY` through a `NEXT_PUBLIC_` variable or browser code.
 
 ## Recorded decisions

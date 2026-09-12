@@ -1,6 +1,7 @@
 "use client";
 
 import type { ProjectState } from "@/lib/state";
+import type { SpeechInfo } from "@/lib/speech";
 
 type DebugPanelProps = {
   open: boolean;
@@ -10,6 +11,9 @@ type DebugPanelProps = {
   model: string;
   latencyMs: number | null;
   frame: string | null;
+  speechInfo: SpeechInfo;
+  replayDisabled: boolean;
+  onReplay: () => void;
 };
 
 export function DebugPanel({
@@ -20,6 +24,9 @@ export function DebugPanel({
   model,
   latencyMs,
   frame,
+  speechInfo,
+  replayDisabled,
+  onReplay,
 }: DebugPanelProps) {
   if (!open) return null;
   return (
@@ -45,6 +52,26 @@ export function DebugPanel({
         <div className="grid grid-cols-2 gap-3">
           <DebugCard label="Model" value={model || "Waiting for first turn"} />
           <DebugCard label="Latency" value={latencyMs == null ? "—" : `${latencyMs} ms`} />
+        </div>
+
+        <div className="mt-3 rounded-2xl bg-white/5 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50">Coach voice</div>
+              <p className="mt-1 text-sm font-semibold">{speechInfo.voice || "OpenRouter natural voice"}</p>
+            </div>
+            <button type="button" onClick={onReplay} disabled={replayDisabled}
+              className="min-h-11 rounded-xl bg-[#d7ff4f] px-3 text-xs font-bold text-[#10140f] disabled:opacity-40">
+              Replay voice
+            </button>
+          </div>
+          <p className="mt-2 break-words text-xs text-white/60">
+            {speechInfo.model || "Waiting for speech"}
+            {speechInfo.latencyMs != null && ` · ${speechInfo.latencyMs} ms`}
+            {` · ${speechInfo.phase}`}
+          </p>
+          {speechInfo.error && <p className="mt-2 text-xs text-orange-200" role="status">{speechInfo.error}</p>}
+          <p className="mt-2 text-xs text-white/45">AI-generated voice. Replay reads the caption without taking a photo.</p>
         </div>
 
         <div className="mt-3 rounded-2xl bg-white/5 p-4">

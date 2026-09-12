@@ -10,6 +10,7 @@ import {
   type VoiceHandle,
 } from "@/components/VoiceController";
 import type { ProjectState, StepApiResult } from "@/lib/state";
+import { initialSpeechInfo, type SpeechInfo } from "@/lib/speech";
 
 const STORAGE_KEY = "build-coach:last-session:v1";
 const DEMO_GOAL =
@@ -30,6 +31,7 @@ export default function Home() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState("");
   const [micStatus, setMicStatus] = useState<MicStatus>("paused");
+  const [speechInfo, setSpeechInfo] = useState<SpeechInfo>(initialSpeechInfo);
   const [busy, setBusy] = useState(false);
   const [state, setState] = useState<ProjectState | null>(null);
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
@@ -230,6 +232,7 @@ export default function Home() {
         busy={busy}
         onTrigger={handleVoiceTrigger}
         onStatus={setMicStatus}
+        onSpeech={setSpeechInfo}
       />
 
       {!sessionActive ? (
@@ -370,7 +373,13 @@ export default function Home() {
                     ? "voice unavailable — use button"
                     : "mic paused"}
               </span>
-              <span className="text-white/45">Say “next”</span>
+              <span className={speechInfo.error ? "text-orange-200" : "text-white/45"} aria-live="polite">
+                {speechInfo.phase === "generating" ? "Preparing voice…"
+                  : speechInfo.phase === "unavailable" ? "Audio unavailable"
+                  : speechInfo.source === "browser" && speechInfo.error ? "Browser voice fallback"
+                  : speechInfo.source === "openrouter" ? "Natural voice"
+                  : "Say “next”"}
+              </span>
             </div>
             <div className="flex gap-3">
               <button
@@ -400,6 +409,9 @@ export default function Home() {
             model={model}
             latencyMs={latencyMs}
             frame={lastFrame}
+            speechInfo={speechInfo}
+            replayDisabled={busy || speechInfo.phase === "generating"}
+            onReplay={() => voiceRef.current?.speak(caption)}
           />
         </section>
       )}

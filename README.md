@@ -12,7 +12,9 @@ localStorage ── ProjectState ─────────┘          │
                                                  ├── activity playbook
                                                  └── OpenRouter vision model
                                                           │
-                  caption + speech <── StepResult JSON <──┘
+                  caption <─────────── StepResult JSON <──┘
+                     │
+                     └── POST /api/speech ── OpenRouter TTS ── MP3 playback
                   transcript/state ──> React + localStorage
 ```
 
@@ -36,10 +38,20 @@ Environment variables:
 OPENROUTER_API_KEY=              # required, server-only
 OPENROUTER_MODEL=google/gemini-3.8-flash
 OPENROUTER_FALLBACK_MODELS=openai/gpt-5.6-luna,anthropic/claude-sonnet-5
+OPENROUTER_TTS_MODEL=x-ai/grok-voice-tts-1.0
+OPENROUTER_TTS_VOICE=eve
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
 The default IDs were checked against OpenRouter’s public model catalog and accept image input. Every request supplies both `model` and ordered `models`, letting OpenRouter move to the fallbacks when a provider fails, rate-limits, moderates, or rejects context. The response’s actual `model` is shown in the agent trace panel. Structured JSON is requested explicitly; models that reject that option get one retry without it. Timeouts get one retry, and invalid output preserves the last good state.
+
+## Natural voice
+
+Coaching instructions use [OpenRouter's speech endpoint](https://openrouter.ai/docs/guides/overview/multimodal/tts) with Grok Voice / Eve by default. The existing `OPENROUTER_API_KEY` is enough; the TTS environment variables are optional overrides. When changing providers, change both model and voice to a supported pair. This adds a speech-generation request (and its usage cost) for each spoken instruction.
+
+The caption appears immediately. Only that text goes to `/api/speech`; the camera and project state stay in the visual reasoning request. MP3 playback uses a Web Audio context unlocked by Start. If speech generation times out or playback fails, the app uses browser speech and labels the fallback. The **i** panel shows the speech model, voice, generation latency, and error, with **Replay voice** to replay the caption without another photo. The initial “Ready” uses browser speech to unlock mobile audio; subsequent coaching uses OpenRouter.
+
+The microphone stays paused while generating or playing speech and resumes after a 300ms quiet period. Speech recognition is still the browser Web Speech API. Sound quality and automatic playback should be verified on the actual demo phone.
 
 ## Backend fixture test
 

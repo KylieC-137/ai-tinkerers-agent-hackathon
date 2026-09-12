@@ -143,3 +143,116 @@ export async function callModel(args: CallModelArgs): Promise<ModelResponse> {
     }
   }
 }
+
+const OPENROUTER_SPEECH_URL = "https://openrouter.ai/api/v1/audio/speech";
+const SPEECH_TIMEOUT_MS = 12_000;
+const MAX_SPEECH_AUDIO_BYTES = 2 * 1024 * 1024;
+
+export class SpeechError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "SpeechError";
+  }
+}
+
+type SpeechResponse = {
+  audio: ArrayBuffer;
+  model: string;
+  voice: string;
+  generationId: string | null;
+};
+
+// Speech has its own endpoint and returns MP3 bytes, not chat-completion JSON.
+export async function callSpeech(input: string, signal?: AbortSignal): Promise<SpeechResponse> {
+  const text = input.trim();
+  if (!text || text.length > 1200) {
+    throw new SpeechError("Speech text must contain 1 to 1200 characters.", 400);
+  }
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new SpeechError("Speech is not configured. Using the device voice.", 503);
+
+  const model = process.env.OPENROUTER_TTS_MODEL?.trim() || "x-ai/grok-voice-tts-1.0";
+  const voice = process.env.OPENROUTER_TTS_VOICE?.trim() || "eve";
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, SPEECH_TIMEOUT_MS);
+  signal?.addEventListener("abort", cancel, { once: true });
+
+  try {
+    if (signal?.aborted) controller.abort();
+    controller.signal.throwIfAborted();
+    const response = await fetch(OPENROUTER_SPEECH_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+        "X-OpenRouter-Title": "Build Coach",
+      },
+      body: JSON.stringify({ model, input: text, voice, response_format: "mp3" }),
+      signal: controller.signal,
+      cache: "no-store",
+    });
+
+    // Never read or forward provider error bodies: they may contain private details.
+    if (!response.ok) {
+      controller.abort();
+      throw new SpeechError("Natural voice is unavailable. Using the device voice.", 502);
+    }
+    const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+    if (contentType !== "audio/mpeg" || !response.body) {
+      controller.abort();
+      throw new SpeechError("Natural voice returned invalid audio. Using the device voice.", 502);
+    }
+    if (Number(response.headers.get("content-length")) > MAX_SPEECH_AUDIO_BYTES) {
+      controller.abort();
+      throw new SpeechError("Natural voice returned too much audio. Using the device voice.", 502);
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      for (;;) {
+        controller.signal.throwIfAborted();
+        const { value, done } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > MAX_SPEECH_AUDIO_BYTES) {
+          controller.abort();
+          throw new SpeechError("Natural voice returned too much audio. Using the device voice.", 502);
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    controller.signal.throwIfAborted();
+    if (!totalBytes) throw new SpeechError("Natural voice returned empty audio. Using the device voice.", 502);
+
+    const audio = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      audio.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return {
+      audio: audio.buffer,
+      model,
+      voice,
+      generationId: response.headers.get("x-generation-id"),
+    };
+  } catch (error) {
+    if (error instanceof SpeechError) throw error;
+    if (timedOut) throw new SpeechError("Natural voice timed out. Using the device voice.", 504);
+    if (signal?.aborted) throw new SpeechError("Speech request was canceled.", 499);
+    throw new SpeechError("Natural voice is unavailable. Using the device voice.", 502);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+  }
+}
