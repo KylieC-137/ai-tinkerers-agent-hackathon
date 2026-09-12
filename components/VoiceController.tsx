@@ -27,12 +27,21 @@ declare global {
   interface Window {
     SpeechRecognition?: RecognitionConstructor;
     webkitSpeechRecognition?: RecognitionConstructor;
-    webkitAudioContext?: typeof AudioContext;
   }
 }
 
 const triggerPattern = /\b(next|what(?:'s| is)? next|does this look good|look good|done|finished|am i done)\b/i;
-const CLIENT_TIMEOUT_MS = 15_000;
+const CLIENT_TIMEOUT_MS = 20_000;
+
+// 20ms of silence. Playing it on the shared <audio> element inside the Start or
+// Replay gesture is what unlocks that element, so every later turn can play the
+// OpenRouter MP3 without a gesture of its own. Web Audio cannot do this job on a
+// phone: mobile Safari interrupts an AudioContext whenever speech synthesis or
+// the microphone takes the audio session, and an interrupted context only
+// resumes from inside a gesture — which is why mobile used to fall back to the
+// browser voice on every turn. A media element survives those interruptions.
+const SILENT_CLIP =
+  "data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YaAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
 
 type VoiceControllerProps = {
   active: boolean;
@@ -53,8 +62,10 @@ export const VoiceController = forwardRef<VoiceHandle, VoiceControllerProps>(
     const triggerRef = useRef(onTrigger);
     const speechInfoRef = useRef<SpeechInfo>(initialSpeechInfo);
     const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
-    const audioContextRef = useRef<AudioContext | null>(null);
-    const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const audioUrlRef = useRef<string | null>(null);
+    const audioUnlockedRef = useRef(false);
+    const synthesisPrimedRef = useRef(false);
     const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
     const requestRef = useRef<AbortController | null>(null);
     const turnRef = useRef(0);
@@ -142,25 +153,43 @@ export const VoiceController = forwardRef<VoiceHandle, VoiceControllerProps>(
       recognitionRef.current = recognition;
     }, [onStatus, pauseRecognition, scheduleRecognition]);
 
+    const ensureAudioElement = useCallback(() => {
+      if (audioRef.current) return audioRef.current;
+      if (typeof window === "undefined" || typeof window.Audio === "undefined") return null;
+      const element = new window.Audio();
+      element.preload = "auto";
+      // Detached audio still needs playsinline on iOS to avoid the media overlay.
+      element.setAttribute("playsinline", "");
+      audioRef.current = element;
+      return element;
+    }, []);
+
+    const releaseAudio = useCallback(() => {
+      const element = audioRef.current;
+      if (element) {
+        element.onended = null;
+        element.onerror = null;
+        try { element.pause(); } catch {}
+      }
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
+    }, []);
+
     const stopPlayback = useCallback(() => {
       requestRef.current?.abort();
       requestRef.current = null;
       if (watchdogRef.current) clearTimeout(watchdogRef.current);
       watchdogRef.current = null;
-      const source = sourceRef.current;
-      sourceRef.current = null;
-      if (source) {
-        source.onended = null;
-        try { source.stop(); } catch {}
-        source.disconnect();
-      }
+      releaseAudio();
       if (utteranceRef.current) {
         utteranceRef.current.onend = null;
         utteranceRef.current.onerror = null;
         utteranceRef.current = null;
       }
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-    }, []);
+    }, [releaseAudio]);
 
     const finish = useCallback((turn: number) => {
       if (turn !== turnRef.current) return;
@@ -213,6 +242,8 @@ export const VoiceController = forwardRef<VoiceHandle, VoiceControllerProps>(
       requestRef.current = controller;
       const timeout = setTimeout(() => controller.abort(), CLIENT_TIMEOUT_MS);
       try {
+        const element = ensureAudioElement();
+        if (!element) throw new Error("Audio playback is unavailable.");
         const response = await fetch("/api/speech", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -223,32 +254,38 @@ export const VoiceController = forwardRef<VoiceHandle, VoiceControllerProps>(
         if (!response.headers.get("content-type")?.startsWith("audio/mpeg")) {
           throw new Error("Speech service returned invalid audio.");
         }
-        const bytes = await response.arrayBuffer();
+        const blob = await response.blob();
         clearTimeout(timeout);
         if (turn !== turnRef.current) return;
-        const context = audioContextRef.current;
-        if (!context || context.state === "closed") throw new Error("Tap Replay voice to enable audio.");
-        if (context.state !== "running") {
-          // A browser may revoke autoplay while the phone is backgrounded.
-          await new Promise<void>((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error("Tap Replay voice to enable audio.")), 1500);
-            context.resume().then(() => { clearTimeout(timer); resolve(); }, (error) => { clearTimeout(timer); reject(error); });
-          });
-        }
-        const buffer = await context.decodeAudioData(bytes);
+        if (!blob.size) throw new Error("Speech service returned empty audio.");
+
+        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+        const url = URL.createObjectURL(blob);
+        audioUrlRef.current = url;
+        element.onended = null;
+        element.onerror = null;
+        element.src = url;
+        element.load();
+        element.onended = () => finish(turn);
+
+        await element.play();
         if (turn !== turnRef.current) return;
-        const source = context.createBufferSource();
-        source.buffer = buffer;
-        source.connect(context.destination);
-        sourceRef.current = source;
-        source.onended = () => finish(turn);
+        element.onerror = () => {
+          if (turn !== turnRef.current) return;
+          speakInBrowser(text, turn, "Natural voice stopped playing; using browser voice.");
+        };
+
         const latency = Number(response.headers.get("x-speech-latency-ms"));
         report({ source: "openrouter", phase: "speaking",
           model: response.headers.get("x-speech-model") || "OpenRouter TTS",
           voice: response.headers.get("x-speech-voice") || "Configured voice",
           latencyMs: Number.isFinite(latency) ? latency : null, error: null });
-        source.start();
-        watchdogRef.current = setTimeout(() => finish(turn), Math.ceil(buffer.duration * 1000) + 3000);
+
+        const duration = Number.isFinite(element.duration) ? element.duration : 0;
+        watchdogRef.current = setTimeout(
+          () => finish(turn),
+          duration > 0 ? Math.ceil(duration * 1000) + 3000 : Math.max(20_000, text.length * 120),
+        );
       } catch (error) {
         if (turn !== turnRef.current) return;
         const reason = controller.signal.aborted ? "Speech generation timed out; using browser voice."
@@ -258,41 +295,52 @@ export const VoiceController = forwardRef<VoiceHandle, VoiceControllerProps>(
         clearTimeout(timeout);
         if (requestRef.current === controller) requestRef.current = null;
       }
-    }, [finish, pauseRecognition, report, speakInBrowser, stopPlayback]);
+    }, [ensureAudioElement, finish, pauseRecognition, report, speakInBrowser, stopPlayback]);
 
-    const unlockAudio = useCallback(() => {
+    // Primes speech synthesis so the fallback path is still allowed later on iOS,
+    // without letting it hold the audio session: a muted, one-space utterance
+    // satisfies the gesture requirement and ends immediately.
+    const primeSpeechSynthesis = useCallback(() => {
+      if (synthesisPrimedRef.current || !("speechSynthesis" in window)) return;
       try {
-        const AudioApi = window.AudioContext || window.webkitAudioContext;
-        if (!AudioApi) return;
-        const context = audioContextRef.current ?? new AudioApi();
-        audioContextRef.current = context;
-        // Start a silent sample synchronously inside the Start/Replay gesture.
-        void context.resume().catch(() => {});
-        const source = context.createBufferSource();
-        source.buffer = context.createBuffer(1, 1, 22050);
-        source.connect(context.destination);
-        source.onended = () => source.disconnect();
-        source.start();
+        const primer = new SpeechSynthesisUtterance(" ");
+        primer.volume = 0;
+        primer.rate = 2;
+        window.speechSynthesis.speak(primer);
+        synthesisPrimedRef.current = true;
       } catch {}
     }, []);
+
+    const unlockAudio = useCallback(() => {
+      primeSpeechSynthesis();
+      const element = ensureAudioElement();
+      if (!element || audioUnlockedRef.current) return;
+      try {
+        element.src = SILENT_CLIP;
+        element.load();
+        const played = element.play();
+        if (played && typeof played.then === "function") {
+          played.then(() => { audioUnlockedRef.current = true; }, () => {});
+        } else {
+          audioUnlockedRef.current = true;
+        }
+      } catch {}
+    }, [ensureAudioElement, primeSpeechSynthesis]);
 
     useImperativeHandle(ref, () => ({
       unlock() {
         activeRef.current = true;
         unlockAudio();
         ensureRecognition();
-        const turn = ++turnRef.current;
-        stopPlayback();
-        speakingRef.current = true;
-        pauseRecognition();
-        // Immediate local utterance preserves the iOS speech user gesture.
-        speakInBrowser("Ready", turn, null);
+        // "Ready" runs the real speech path, so the natural voice is proven
+        // working — and audible — before the first coaching turn.
+        void speak("Ready");
       },
       speak(text) {
         unlockAudio();
         void speak(text);
       },
-    }), [ensureRecognition, pauseRecognition, speak, speakInBrowser, stopPlayback, unlockAudio]);
+    }), [ensureRecognition, speak, unlockAudio]);
 
     useEffect(() => {
       if (!("speechSynthesis" in window)) return;
@@ -333,9 +381,8 @@ export const VoiceController = forwardRef<VoiceHandle, VoiceControllerProps>(
       }
       recognitionRef.current = null;
       recognitionRunningRef.current = false;
-      const context = audioContextRef.current;
-      audioContextRef.current = null;
-      void context?.close().catch(() => {});
+      audioRef.current = null;
+      audioUnlockedRef.current = false;
     }, [stopPlayback]);
 
     return null;

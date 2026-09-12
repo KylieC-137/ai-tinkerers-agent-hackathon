@@ -17,6 +17,8 @@
 - Preserve the last good state on model, timeout, or parsing failure.
 - Spoken output stays under two short sentences and is always duplicated in the visual caption.
 - Speech output uses `/api/speech` and OpenRouter's dedicated `/api/v1/audio/speech` endpoint. Keep all OpenRouter fetch calls in `lib/openrouter.ts`. Use the existing key; optional `OPENROUTER_TTS_MODEL` and `OPENROUTER_TTS_VOICE` must be a supported pair.
+- Play the returned MP3 through one reusable `HTMLAudioElement`, unlocked with a silent clip inside the Start/Replay gesture. Do not route speech through Web Audio: mobile Safari interrupts an `AudioContext` whenever speech synthesis or the microphone takes the audio session, and an interrupted context only resumes from inside a gesture, which forced every phone turn onto the browser voice.
+- Prime speech synthesis from the Start gesture with a muted one-space utterance so the fallback voice stays permitted on iOS without holding the audio session.
 - Cancel superseded speech; pause the mic during generation/playback and for 300ms afterward. Replay must not capture an image or advance the project.
 - Never expose `OPENROUTER_API_KEY` through a `NEXT_PUBLIC_` variable or browser code.
 
