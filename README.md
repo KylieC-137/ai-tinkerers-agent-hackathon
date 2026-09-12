@@ -48,9 +48,10 @@ With the dev server running in one terminal and a valid key configured:
 ```bash
 pnpm test:step
 pnpm test:step 02-metal-mode.jpg
+pnpm test:step 04-wrong-anchor.jpg wood-state.json next
 ```
 
-Set `BUILD_COACH_URL` to test a deployed URL. The script prints the full result, actual model, and latency. The checked-in images are deliberately labeled placeholders; replace them with real photos using the same filenames before prompt tuning.
+The optional arguments are image filename, state filename, and utterance. Set `BUILD_COACH_URL` to test a deployed URL. The script prints the full result, actual model, and latency. The checked-in images are deliberately labeled placeholders; replace them with real photos using the same filenames before prompt tuning.
 
 ## Deploy to Vercel
 

@@ -4,9 +4,16 @@ import path from "node:path";
 const baseUrl = process.env.BUILD_COACH_URL || "http://localhost:3000";
 const fixture = process.argv[2] || "01-tools.jpg";
 const fixturePath = path.join(process.cwd(), "public", "fixtures", fixture);
+const stateFixture = process.argv[3];
+const utterance = process.argv[4] || (stateFixture ? "next" : "start");
 
 async function main() {
   const image = await readFile(fixturePath);
+  const state = stateFixture
+    ? JSON.parse(
+        await readFile(path.join(process.cwd(), "public", "fixtures", stateFixture), "utf8"),
+      )
+    : null;
   const response = await fetch(`${baseUrl}/api/step`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -14,8 +21,8 @@ async function main() {
       goal:
         "My goal is to put up a hook in the wall but I'm not sure where to drill and how to do it. I'm using these hooks and I have this stud finder.",
       activityId: "wall-hook",
-      state: null,
-      utterance: "start",
+      state,
+      utterance,
       imageDataUrl: `data:image/jpeg;base64,${image.toString("base64")}`,
     }),
   });

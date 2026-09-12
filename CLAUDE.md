@@ -35,6 +35,7 @@ In a second terminal:
 ```bash
 pnpm test:step
 pnpm test:step 02-metal-mode.jpg
+pnpm test:step 04-wrong-anchor.jpg wood-state.json next
 pnpm typecheck
 pnpm build
 ```

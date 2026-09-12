@@ -1,0 +1,25 @@
+{
+  "activityId": "wall-hook",
+  "goal": "My goal is to put up a hook in the wall but I'm not sure where to drill and how to do it. I'm using these hooks and I have this stud finder.",
+  "steps": [
+    { "id": "identify-wall", "title": "Identify the wall material at the chosen spot", "status": "done" },
+    { "id": "set-finder", "title": "Set the stud finder to wood/stud mode", "status": "done" },
+    { "id": "scan-wall", "title": "Scan slowly sideways with the finder held flat", "status": "done" },
+    { "id": "mark-center", "title": "Locate the stud edges and center, or confirm hollow drywall", "status": "done" },
+    { "id": "choose-hardware", "title": "Choose hardware for the discovered wall material", "status": "active" },
+    { "id": "position-hook", "title": "Position the hook at the mark", "status": "pending" },
+    { "id": "drive-screw", "title": "Drive the screw until flush", "status": "pending" },
+    { "id": "verify", "title": "Verify the hook is secure", "status": "pending" }
+  ],
+  "currentStepId": "choose-hardware",
+  "facts": {
+    "wallMaterial": "wood_stud",
+    "studFinderMode": "wood",
+    "studCenterMarked": "true"
+  },
+  "observations": [
+    { "t": 1789228800000, "note": "Stud finder indicated wood; user checked both edges and marked the center." }
+  ],
+  "warnings": [],
+  "done": false
+}
